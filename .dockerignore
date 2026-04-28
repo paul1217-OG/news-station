@@ -1,0 +1,12 @@
+.env
+.env.*
+.git
+.gitignore
+__pycache__
+*.pyc
+.venv
+venv
+output/
+assets/
+*.md
+.DS_Store

@@ -1,0 +1,85 @@
+# 新聞來源設定 — 各地區 RSS Feed
+# 已驗證 2026/04 可用，若失效請更新
+
+sources:
+  # ==== 台灣股市與產業 ====
+  - name: "鉅亨網 台股"
+    url: "https://www.cnyes.com/rss/cat/tw_stock"
+    category: "TW"
+    weight: 1.0
+
+  - name: "TechNews 科技新報"
+    url: "https://technews.tw/feed/"
+    category: "INDUSTRY"
+    weight: 0.9
+
+  - name: "經濟日報 產業熱點"
+    url: "https://money.udn.com/rssfeed/news/1001/5591/5612?ch=money"
+    category: "INDUSTRY"
+    weight: 0.8
+
+  - name: "工商時報 證券"
+    url: "https://www.ctee.com.tw/rss/securities.xml"
+    category: "TW"
+    weight: 0.8
+
+  # ==== 美股與全球 ====
+  - name: "Yahoo Finance Top Stories"
+    url: "https://finance.yahoo.com/news/rssindex"
+    category: "US"
+    weight: 1.0
+
+  - name: "MarketWatch Top Stories"
+    url: "https://feeds.content.dowjones.io/public/rss/mw_topstories"
+    category: "US"
+    weight: 0.9
+
+  - name: "Reuters Business"
+    url: "https://feeds.reuters.com/reuters/businessNews"
+    category: "MACRO"
+    weight: 0.9
+
+  - name: "CNBC Top News"
+    url: "https://www.cnbc.com/id/100003114/device/rss/rss.html"
+    category: "US"
+    weight: 0.8
+
+  # ==== 亞洲 ====
+  - name: "Nikkei Asia"
+    url: "https://asia.nikkei.com/rss/feed/nar"
+    category: "ASIA"
+    weight: 0.8
+
+  # ==== 歐洲與全球宏觀 ====
+  - name: "BBC Business"
+    url: "http://feeds.bbci.co.uk/news/business/rss.xml"
+    category: "EU"
+    weight: 0.7
+
+  # ==== 公開資訊觀測站（手動處理）====
+  # MOPS 沒有完整 RSS，靠 OpenAPI 抓取，邏輯寫在 mops_fetcher.py
+  # https://openapi.twse.com.tw/v1/opendata/t187ap04_L
+
+# 排序權重（影響 AI 摘要時優先序）
+category_priority:
+  TW: 1.0
+  US: 0.9
+  INDUSTRY: 0.85
+  ASIA: 0.6
+  EU: 0.4
+  MACRO: 0.7
+
+# AI 摘要設定
+summarizer:
+  max_items: 8
+  language: "zh-TW"
+  tone: "專業、簡潔、客觀，類似華爾街日報中文版風格"
+
+# 圖文卡片設定
+card:
+  width: 1080
+  height: 1350
+  brand_name: "📰 每日財經早報"
+  primary_color: "#1A237E"
+  accent_color: "#FFC107"
+  font_path_zh: "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc"

@@ -1,0 +1,22 @@
+# 環境變數（含 token、API key）絕對不能進 git
+.env
+.env.local
+.env.production
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# 每日輸出
+output/cards/*.jpg
+output/*.json
+*.log
+
+# IDE
+.vscode/
+.idea/
+.DS_Store
