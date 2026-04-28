@@ -7,7 +7,7 @@
   "deploy": {
     "startCommand": "python src/main.py",
     "restartPolicyType": "NEVER",
-    "cronSchedule": "* * * * *",
+    "cronSchedule": "30 23 * * *",
     "numReplicas": 1
   }
 }
