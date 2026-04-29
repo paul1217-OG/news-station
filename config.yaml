@@ -1,48 +1,85 @@
-# 新聞來源設定 — 各地區 RSS Feed
-# 已驗證 2026/04 可用，若失效請更新
+# 新聞來源設定 v4 — 加強 金融 / 餐飲 / 股市 / 半導體 / 公發站 優先
 
 sources:
-  # ==== 台灣股市與產業 ====
+  # ==== 金融 / 股市 / 台股（高優先）====
   - name: "鉅亨網 台股"
     url: "https://www.cnyes.com/rss/cat/tw_stock"
     category: "TW"
     weight: 1.0
 
-  - name: "TechNews 科技新報"
-    url: "https://technews.tw/feed/"
-    category: "INDUSTRY"
-    weight: 0.9
+  - name: "鉅亨網 國際股"
+    url: "https://www.cnyes.com/rss/cat/wd_stock"
+    category: "US"
+    weight: 0.95
+
+  - name: "鉅亨網 金融"
+    url: "https://www.cnyes.com/rss/cat/headline"
+    category: "TW"
+    weight: 1.0
+
+  - name: "經濟日報 證券"
+    url: "https://money.udn.com/rssfeed/news/1001/5590/12017?ch=money"
+    category: "TW"
+    weight: 1.0
 
   - name: "經濟日報 產業熱點"
     url: "https://money.udn.com/rssfeed/news/1001/5591/5612?ch=money"
     category: "INDUSTRY"
-    weight: 0.8
+    weight: 0.9
 
   - name: "工商時報 證券"
     url: "https://www.ctee.com.tw/rss/securities.xml"
     category: "TW"
-    weight: 0.8
+    weight: 0.95
 
-  # ==== 美股與全球 ====
+  # ==== 半導體（高優先）====
+  - name: "TechNews 科技新報"
+    url: "https://technews.tw/feed/"
+    category: "INDUSTRY"
+    weight: 1.0
+
+  - name: "DIGITIMES 半導體"
+    url: "https://www.digitimes.com.tw/rss/semiconductor.xml"
+    category: "INDUSTRY"
+    weight: 1.0
+
+  # ==== 餐飲產業 ====
+  - name: "食力 foodNEXT"
+    url: "https://www.foodnext.net/rss/index"
+    category: "INDUSTRY"
+    weight: 0.85
+
+  - name: "經濟日報 餐飲零售"
+    url: "https://money.udn.com/rssfeed/news/1001/5613/12345?ch=money"
+    category: "INDUSTRY"
+    weight: 0.85
+
+  # ==== 美股 ====
   - name: "Yahoo Finance Top Stories"
     url: "https://finance.yahoo.com/news/rssindex"
     category: "US"
-    weight: 1.0
+    weight: 0.9
 
   - name: "MarketWatch Top Stories"
     url: "https://feeds.content.dowjones.io/public/rss/mw_topstories"
     category: "US"
     weight: 0.9
 
-  - name: "Reuters Business"
-    url: "https://feeds.reuters.com/reuters/businessNews"
-    category: "MACRO"
-    weight: 0.9
-
   - name: "CNBC Top News"
     url: "https://www.cnbc.com/id/100003114/device/rss/rss.html"
     category: "US"
-    weight: 0.8
+    weight: 0.85
+
+  # ==== 國際宏觀 ====
+  - name: "Reuters Business"
+    url: "https://feeds.reuters.com/reuters/businessNews"
+    category: "MACRO"
+    weight: 0.85
+
+  - name: "BBC Business"
+    url: "http://feeds.bbci.co.uk/news/business/rss.xml"
+    category: "EU"
+    weight: 0.7
 
   # ==== 亞洲 ====
   - name: "Nikkei Asia"
@@ -50,36 +87,70 @@ sources:
     category: "ASIA"
     weight: 0.8
 
-  # ==== 歐洲與全球宏觀 ====
-  - name: "BBC Business"
-    url: "http://feeds.bbci.co.uk/news/business/rss.xml"
-    category: "EU"
-    weight: 0.7
 
-  # ==== 公開資訊觀測站（手動處理）====
-  # MOPS 沒有完整 RSS，靠 OpenAPI 抓取，邏輯寫在 mops_fetcher.py
-  # https://openapi.twse.com.tw/v1/opendata/t187ap04_L
-
-# 排序權重（影響 AI 摘要時優先序）
+# 排序權重（影響挑選優先級）
 category_priority:
-  TW: 1.0
-  US: 0.9
-  INDUSTRY: 0.85
+  MOPS: 1.0       # 公發站最優先（重大訊息直接影響台股個股）
+  TW: 1.0         # 台股 + 金融
+  INDUSTRY: 0.95  # 含半導體 + 餐飲
+  US: 0.85
   ASIA: 0.6
-  EU: 0.4
   MACRO: 0.7
+  EU: 0.4
+
+# 主題權重（在 .env 中可覆寫）
+default_topic_weights:
+  TW: 35
+  US: 20
+  ASIA: 8
+  EU: 4
+  INDUSTRY: 23   # 半導體 + 餐飲合計
+  MACRO: 5
+  MOPS: 5
 
 # AI 摘要設定
 summarizer:
   max_items: 8
   language: "zh-TW"
-  tone: "專業、簡潔、客觀，類似華爾街日報中文版風格"
+
+# 公發站關鍵字過濾（只挑重要的重大訊息推播）
+mops_keywords:
+  # 金融
+  - "增資"
+  - "減資"
+  - "現金股利"
+  - "股票股利"
+  - "盈餘分配"
+  - "董事會"
+  # 重大投資
+  - "投資"
+  - "併購"
+  - "收購"
+  - "處分"
+  - "出售"
+  - "讓與"
+  # 財報
+  - "財報"
+  - "EPS"
+  - "營收"
+  - "獲利"
+  - "虧損"
+  # 半導體 / 餐飲
+  - "半導體"
+  - "晶圓"
+  - "封測"
+  - "餐飲"
+  - "連鎖"
+  # 公司治理
+  - "重大訊息"
+  - "更正"
+  - "停牌"
+  - "暫停交易"
 
 # 圖文卡片設定
 card:
   width: 1080
   height: 1350
   brand_name: "📰 每日財經早報"
-  primary_color: "#1A237E"
-  accent_color: "#FFC107"
-  font_path_zh: "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc"
+  primary_color: "#0F1932"
+  accent_color: "#F5C038"
