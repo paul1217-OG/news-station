@@ -1,7 +1,7 @@
 """
-line_publisher.py v4 — 單則 newsletter 文字訊息（替代 carousel）
-讓使用者像讀電子報一樣連續滑動閱讀，不用左右切換卡片。
-最後附一則小 Flex 卡片含 PDF 下載按鈕。
+line_publisher.py v5 — 完整內容 newsletter（多則訊息 + PDF 卡）
+每則新聞顯示完整段落（不截斷），讓使用者在 LINE 上就能讀完。
+總長超過單則上限時自動切成多則訊息（LINE 一次最多 5 則）。
 """
 from __future__ import annotations
 import json, os
@@ -12,16 +12,8 @@ import requests
 
 
 LINE_BROADCAST_URL = "https://api.line.me/v2/bot/message/broadcast"
-MAX_TEXT_LEN = 4900  # LINE 單則 5000 字上限，留點 buffer
-
-
-# ====== 文字 newsletter 組裝 ======
-
-def _truncate(text: str, n: int) -> str:
-    if not text:
-        return ""
-    text = text.replace("\n\n\n", "\n\n").strip()
-    return text[:n] + ("…" if len(text) > n else "")
+MAX_TEXT_LEN = 4900       # LINE 單則 5000 字上限，留 buffer
+MAX_BODY_PER_ITEM = 500   # 每則新聞內文長度
 
 
 def _stars(score: int) -> str:
@@ -29,95 +21,123 @@ def _stars(score: int) -> str:
     return "★" * full + "☆" * (5 - full)
 
 
-def build_newsletter_text(
+def _clean(text: str) -> str:
+    if not text:
+        return ""
+    return text.replace("\n\n\n", "\n\n").strip()
+
+
+def format_news_item(item: Dict[str, Any], i: int, total: int) -> str:
+    """格式化單則新聞為「足以讓使用者讀完」的版本"""
+    emoji = item.get("emoji", "📰")
+    tag = item.get("tag", "其他")
+    title = item.get("title", "")
+    importance = item.get("importance", 5)
+
+    # 優先用 AI 改寫的 long_text；若無就用原始 summary
+    body = item.get("long_text") or item.get("summary", "")
+    body = _clean(body)
+    if len(body) > MAX_BODY_PER_ITEM:
+        body = body[:MAX_BODY_PER_ITEM] + "…"
+
+    src = item.get("source", "")
+
+    parts = [
+        f"━━━━━━━━",
+        f"【{i}/{total}】 {emoji} [{tag}] {_stars(importance)}",
+        title,
+        "",
+        body,
+    ]
+    if src:
+        parts.append("")
+        parts.append(f"— 資料來源：{src}")
+
+    return "\n".join(parts)
+
+
+def build_newsletter_messages(
     news_items: List[Dict[str, Any]],
     date_str: str,
     weekday: str,
     editorial_text: str = "",
     upcoming_text: str = "",
     pdf_url: str | None = None,
-) -> str:
-    """組合一則完整的 newsletter 文字訊息"""
+) -> List[str]:
+    """
+    回傳「多則訊息」的字串陣列。
+    分配規則：
+      - 訊息 1：開頭 + 編輯導讀 + 前 N 則新聞（直到接近上限）
+      - 訊息 2、3...：剩下的新聞，自動分頁
+      - 最後一則訊息附加：明日關注 + PDF 連結
+    """
+    messages: List[str] = []
 
-    lines = []
-    lines.append("📰 每日財經早報")
-    lines.append(f"{date_str}（{weekday}）")
-    lines.append("━━━━━━━━━━━━━━")
-    lines.append("")
-
-    # 導讀
+    header = []
+    header.append("📰 每日財經早報")
+    header.append(f"{date_str}（{weekday}）")
     if editorial_text:
-        lines.append("▎今日導讀")
-        lines.append(_truncate(editorial_text, 360))
-        lines.append("")
-        lines.append("━━━━━━━━━━━━━━")
-        lines.append("")
+        header.append("━━━━━━━━━━━━━━")
+        header.append("")
+        header.append("▎今日導讀")
+        header.append(_clean(editorial_text)[:500])
+    header_str = "\n".join(header) + "\n"
 
-    # 8 大重點
-    lines.append(f"▎今日 {len(news_items)} 大重點")
-    lines.append("")
-
-    for i, item in enumerate(news_items, 1):
-        emoji = item.get("emoji", "📰")
-        tag = item.get("tag", "其他")
-        title = item.get("title", "")
-        importance = item.get("importance", 5)
-
-        # 標題列
-        lines.append(f"【{i}】 {emoji} [{tag}] {_stars(importance)}")
-        lines.append(title)
-
-        # 1～2 句重點摘要（用 long_text 第一段，或 summary）
-        summary = item.get("long_text") or item.get("summary", "")
-        # 抓第一段（雙換行 / 句號 為界）
-        first_para = summary.split("\n\n")[0] if summary else ""
-        first_para = _truncate(first_para, 160)
-        if first_para and first_para != title:
-            lines.append(f"　{first_para}")
-
-        # 來源 + 連結（短連結處理）
-        src = item.get("source", "")
-        link = item.get("link", "")
-        if link:
-            lines.append(f"　🔗 {src}：{_truncate(link, 50)}")
-
-        lines.append("")
-
-    lines.append("━━━━━━━━━━━━━━")
-    lines.append("")
-
-    # 明日關注
+    footer_parts = []
     if upcoming_text:
-        lines.append("▎明日／本週關注")
-        lines.append(_truncate(upcoming_text, 320))
-        lines.append("")
-        lines.append("━━━━━━━━━━━━━━")
-        lines.append("")
-
-    # PDF 連結
+        footer_parts.append("━━━━━━━━━━━━━━")
+        footer_parts.append("")
+        footer_parts.append("▎明日／本週關注")
+        footer_parts.append(_clean(upcoming_text)[:400])
     if pdf_url:
-        lines.append("📥 完整 PDF 報告（手機友善報紙版）")
-        lines.append(pdf_url)
-        lines.append("")
+        footer_parts.append("")
+        footer_parts.append("━━━━━━━━━━━━━━")
+        footer_parts.append("📥 完整 PDF 報告")
+        footer_parts.append(pdf_url)
+    footer_parts.append("")
+    footer_parts.append("⌐ 公開財經 RSS + 公開資訊觀測站")
+    footer_parts.append("⌐ AI 寫稿：Google Gemini")
+    footer_parts.append("⌐ 明日 07:30 再見")
+    footer_str = "\n".join(footer_parts)
 
-    # 落款
-    lines.append("⌐ 資料：公開財經媒體 RSS + 公開資訊觀測站")
-    lines.append("⌐ AI 寫稿：Google Gemini")
-    lines.append("⌐ 明日同一時間 07:30 再見")
+    # 把每則新聞先格式化好
+    formatted = [format_news_item(it, i, len(news_items))
+                 for i, it in enumerate(news_items, 1)]
 
-    text = "\n".join(lines)
+    # 開始堆疊：訊息 1 從 header 起
+    current = header_str
+    for f in formatted:
+        candidate = current + "\n" + f + "\n"
+        # 預留 footer 空間給最後一則
+        if len(candidate) > MAX_TEXT_LEN - 200:
+            # 推掉目前累積，開新訊息
+            messages.append(current.rstrip())
+            current = f + "\n"
+        else:
+            current = candidate
 
-    # 安全裁切
-    if len(text) > MAX_TEXT_LEN:
-        text = text[:MAX_TEXT_LEN - 30] + "\n\n…（內容過長，請見 PDF）"
+    # 把 footer 塞進最後一則；若塞不下就再開一則
+    candidate = current + "\n" + footer_str
+    if len(candidate) <= MAX_TEXT_LEN:
+        messages.append(candidate.rstrip())
+    else:
+        messages.append(current.rstrip())
+        messages.append(footer_str)
 
-    return text
+    # 安全截斷：如果單則仍超過上限（防呆）
+    safe = []
+    for m in messages:
+        if len(m) > MAX_TEXT_LEN:
+            m = m[:MAX_TEXT_LEN - 30] + "\n\n…（請見 PDF）"
+        safe.append(m)
+
+    # LINE 廣播一次最多 5 則
+    return safe[:5]
 
 
 # ====== Flex 短卡片（PDF 下載按鈕專用）======
 
 def build_pdf_action_card(date_str: str, pdf_url: str) -> Dict[str, Any]:
-    """獨立一則 Flex bubble，只負責 PDF 下載按鈕"""
     return {
         "type": "flex",
         "altText": f"📥 {date_str} 完整 PDF 報告",
@@ -150,18 +170,15 @@ def build_pdf_action_card(date_str: str, pdf_url: str) -> Dict[str, Any]:
     }
 
 
-# ====== 後備卡片（沒 pdf_url 時也要保留訊息結構）======
-
-def build_simple_text_message(text: str) -> Dict[str, Any]:
+def build_text_message(text: str) -> Dict[str, Any]:
     return {"type": "text", "text": text}
 
 
 # ====== 廣播 ======
 
 def broadcast(messages: List[Dict[str, Any]], access_token: str) -> Dict[str, Any]:
-    """送出多則訊息"""
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-    payload = {"messages": messages[:5]}  # LINE 一次最多 5 則
+    payload = {"messages": messages[:5]}
     r = requests.post(LINE_BROADCAST_URL, headers=headers, json=payload, timeout=20)
     return {"status": r.status_code, "body": r.text, "ok": r.status_code == 200}
 
@@ -174,27 +191,31 @@ def publish(news_items, date_str="", cover_image_url=None, pdf_url=None,
         date_str = datetime.now().strftime("%Y/%m/%d")
     weekday = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][datetime.now().weekday()]
 
-    # 主訊息：newsletter 文字
-    text_body = build_newsletter_text(
+    # 組多則文字訊息
+    text_messages = build_newsletter_messages(
         news_items, date_str, weekday,
         editorial_text=editorial_text,
         upcoming_text=upcoming_text,
         pdf_url=pdf_url,
     )
 
-    messages = [build_simple_text_message(text_body)]
+    # LINE 一次最多 5 則 → 文字 + PDF 卡片合計不能超過 5
+    # 預留 1 格給 PDF 卡，所以文字最多 4 則
+    if pdf_url and len(text_messages) > 4:
+        text_messages = text_messages[:4]
 
-    # 副訊息：PDF 下載 Flex（如果有 PDF URL）
+    messages = [build_text_message(t) for t in text_messages]
+
     if pdf_url:
         messages.append(build_pdf_action_card(date_str, pdf_url))
 
-    # 落地存檔（供除錯）
+    # 落地存檔
     out_path = Path(output_dir) / "messages.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
     txt_path = Path(output_dir) / "newsletter_preview.txt"
-    txt_path.write_text(text_body, encoding="utf-8")
-    print(f"💾 訊息已存：{out_path}")
+    txt_path.write_text("\n\n=== 訊息分隔 ===\n\n".join(text_messages), encoding="utf-8")
+    print(f"💾 訊息已存：{out_path}（共 {len(messages)} 則）")
     print(f"💾 文字預覽：{txt_path}")
 
     dry_run = os.environ.get("DRY_RUN", "true").lower() in ("1", "true", "yes")
@@ -221,6 +242,9 @@ if __name__ == "__main__":
     import sys
     src = sys.argv[1] if len(sys.argv) > 1 else "../output/summarized.json"
     items = json.loads(Path(src).read_text(encoding="utf-8"))
-    publish(items, editorial_text="今日市場以半導體與 AI 為主軸，台積電法說與輝達 Blackwell Ultra 出貨同時推升相關供應鏈情緒。在宏觀面，Fed 議息會議紀要轉鴿派強化降息預期，市場避險與增持成長股的拉鋸延續。",
-            upcoming_text="本週關注重點：美國 4 月 CPI、零售銷售、PMI 等數據；Fed 主席演講可能釋出進一步政策訊號；台股法說會進入旺季，鴻海、聯發科等將陸續登場；公開資訊觀測站每日 17:00 後重大訊息。",
-            pdf_url="https://github.com/paul1217-OG/news-station/raw/main/reports/2026-04-29.pdf")
+    publish(
+        items,
+        editorial_text="今日市場以半導體與 AI 為主軸，台積電法說與輝達 Blackwell Ultra 出貨同時推升相關供應鏈情緒。在宏觀面，Fed 議息會議紀要轉鴿派強化降息預期。",
+        upcoming_text="本週重點：美國 4 月 CPI、零售銷售、PMI 等數據；Fed 主席演講；台股法說會旺季續行。",
+        pdf_url="https://github.com/paul1217-OG/news-station/raw/main/reports/2026-05-02.pdf",
+    )
