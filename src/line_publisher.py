@@ -1,5 +1,7 @@
 """
-line_publisher.py v3 — 加上 PDF 下載按鈕在封面 bubble
+line_publisher.py v4 — 單則 newsletter 文字訊息（替代 carousel）
+讓使用者像讀電子報一樣連續滑動閱讀，不用左右切換卡片。
+最後附一則小 Flex 卡片含 PDF 下載按鈕。
 """
 from __future__ import annotations
 import json, os
@@ -10,132 +12,215 @@ import requests
 
 
 LINE_BROADCAST_URL = "https://api.line.me/v2/bot/message/broadcast"
+MAX_TEXT_LEN = 4900  # LINE 單則 5000 字上限，留點 buffer
 
 
-def build_flex_message(news_items, date_str, cover_image_url=None, pdf_url=None):
-    bubbles = []
+# ====== 文字 newsletter 組裝 ======
 
-    cover_body_contents = [
-        {"type": "text", "text": "📰 每日財經早報", "color": "#FFFFFF",
-         "size": "xl", "weight": "bold"},
-        {"type": "text", "text": date_str, "color": "#FFC107",
-         "size": "sm", "margin": "sm"},
-        {"type": "separator", "margin": "lg", "color": "#FFC107"},
-        {"type": "text", "text": f"今日 {len(news_items)} 大重點",
-         "color": "#FFFFFF", "size": "lg", "weight": "bold", "margin": "lg"},
-        {"type": "text", "text": "→ 滑右邊看每一則",
-         "color": "#B4BED2", "size": "xs", "margin": "md"},
-    ]
+def _truncate(text: str, n: int) -> str:
+    if not text:
+        return ""
+    text = text.replace("\n\n\n", "\n\n").strip()
+    return text[:n] + ("…" if len(text) > n else "")
 
-    cover_bubble = {
-        "type": "bubble", "size": "kilo",
-        "body": {"type": "box", "layout": "vertical",
-                 "backgroundColor": "#0F1932", "paddingAll": "20px",
-                 "contents": cover_body_contents}
-    }
-    if cover_image_url:
-        cover_bubble["hero"] = {"type": "image", "url": cover_image_url,
-                                "size": "full", "aspectRatio": "4:5", "aspectMode": "cover"}
 
-    # 封面加 PDF 下載按鈕
-    if pdf_url:
-        cover_bubble["footer"] = {
-            "type": "box", "layout": "vertical", "spacing": "sm",
-            "contents": [
-                {"type": "button", "style": "primary", "color": "#FFC107",
-                 "action": {"type": "uri", "label": "📥 下載完整 PDF 報告", "uri": pdf_url}},
-                {"type": "text", "text": "繁體中文 / 含編輯小評",
-                 "color": "#B4BED2", "size": "xxs", "align": "center", "margin": "sm"},
-            ]
-        }
+def _stars(score: int) -> str:
+    full = max(0, min(5, int(score / 2)))
+    return "★" * full + "☆" * (5 - full)
 
-    bubbles.append(cover_bubble)
 
-    # 各新聞 bubble
+def build_newsletter_text(
+    news_items: List[Dict[str, Any]],
+    date_str: str,
+    weekday: str,
+    editorial_text: str = "",
+    upcoming_text: str = "",
+    pdf_url: str | None = None,
+) -> str:
+    """組合一則完整的 newsletter 文字訊息"""
+
+    lines = []
+    lines.append("📰 每日財經早報")
+    lines.append(f"{date_str}（{weekday}）")
+    lines.append("━━━━━━━━━━━━━━")
+    lines.append("")
+
+    # 導讀
+    if editorial_text:
+        lines.append("▎今日導讀")
+        lines.append(_truncate(editorial_text, 360))
+        lines.append("")
+        lines.append("━━━━━━━━━━━━━━")
+        lines.append("")
+
+    # 8 大重點
+    lines.append(f"▎今日 {len(news_items)} 大重點")
+    lines.append("")
+
     for i, item in enumerate(news_items, 1):
         emoji = item.get("emoji", "📰")
-        title = item.get("title", "")
-        summary = item.get("summary", "")
-        link = item.get("link", "https://example.com")
         tag = item.get("tag", "其他")
+        title = item.get("title", "")
         importance = item.get("importance", 5)
 
-        bubble = {
-            "type": "bubble", "size": "kilo",
-            "body": {"type": "box", "layout": "vertical",
-                     "backgroundColor": "#1A2347", "paddingAll": "20px",
-                     "contents": [
-                         {"type": "box", "layout": "horizontal",
-                          "contents": [
-                              {"type": "text", "text": tag, "color": "#FFC107",
-                               "size": "sm", "weight": "bold", "flex": 0},
-                              {"type": "text", "text": f"{i}/{len(news_items)}",
-                               "color": "#B4BED2", "size": "sm", "align": "end"},
-                          ]},
-                         {"type": "text", "text": f"{emoji} {title}",
-                          "color": "#FFFFFF", "size": "lg", "weight": "bold",
-                          "wrap": True, "margin": "md"},
-                         {"type": "separator", "margin": "lg", "color": "#3A4570"},
-                         {"type": "text", "text": summary[:140],
-                          "color": "#D4DBED", "size": "sm", "wrap": True, "margin": "lg"},
-                         {"type": "text", "text": "⭐" * min(int(importance / 2), 5),
-                          "color": "#FFC107", "size": "xs", "margin": "lg"},
-                     ]},
-            "footer": {"type": "box", "layout": "vertical",
-                       "contents": [
-                           {"type": "button", "style": "primary", "color": "#FFC107",
-                            "action": {"type": "uri", "label": "看原文 →", "uri": link}}
-                       ]}
-        }
-        bubbles.append(bubble)
+        # 標題列
+        lines.append(f"【{i}】 {emoji} [{tag}] {_stars(importance)}")
+        lines.append(title)
 
+        # 1～2 句重點摘要（用 long_text 第一段，或 summary）
+        summary = item.get("long_text") or item.get("summary", "")
+        # 抓第一段（雙換行 / 句號 為界）
+        first_para = summary.split("\n\n")[0] if summary else ""
+        first_para = _truncate(first_para, 160)
+        if first_para and first_para != title:
+            lines.append(f"　{first_para}")
+
+        # 來源 + 連結（短連結處理）
+        src = item.get("source", "")
+        link = item.get("link", "")
+        if link:
+            lines.append(f"　🔗 {src}：{_truncate(link, 50)}")
+
+        lines.append("")
+
+    lines.append("━━━━━━━━━━━━━━")
+    lines.append("")
+
+    # 明日關注
+    if upcoming_text:
+        lines.append("▎明日／本週關注")
+        lines.append(_truncate(upcoming_text, 320))
+        lines.append("")
+        lines.append("━━━━━━━━━━━━━━")
+        lines.append("")
+
+    # PDF 連結
+    if pdf_url:
+        lines.append("📥 完整 PDF 報告（手機友善報紙版）")
+        lines.append(pdf_url)
+        lines.append("")
+
+    # 落款
+    lines.append("⌐ 資料：公開財經媒體 RSS + 公開資訊觀測站")
+    lines.append("⌐ AI 寫稿：Google Gemini")
+    lines.append("⌐ 明日同一時間 07:30 再見")
+
+    text = "\n".join(lines)
+
+    # 安全裁切
+    if len(text) > MAX_TEXT_LEN:
+        text = text[:MAX_TEXT_LEN - 30] + "\n\n…（內容過長，請見 PDF）"
+
+    return text
+
+
+# ====== Flex 短卡片（PDF 下載按鈕專用）======
+
+def build_pdf_action_card(date_str: str, pdf_url: str) -> Dict[str, Any]:
+    """獨立一則 Flex bubble，只負責 PDF 下載按鈕"""
     return {
         "type": "flex",
-        "altText": f"📰 {date_str} 每日財經早報｜{len(news_items)} 大重點" + (" + PDF" if pdf_url else ""),
-        "contents": {"type": "carousel", "contents": bubbles[:12]}
+        "altText": f"📥 {date_str} 完整 PDF 報告",
+        "contents": {
+            "type": "bubble",
+            "size": "kilo",
+            "body": {
+                "type": "box", "layout": "vertical",
+                "backgroundColor": "#1A1A1A",
+                "paddingAll": "20px",
+                "contents": [
+                    {"type": "text", "text": "📥 完整 PDF 報告",
+                     "color": "#F5C038", "size": "lg", "weight": "bold"},
+                    {"type": "text", "text": f"{date_str}　報紙風格手機版",
+                     "color": "#B4B4B4", "size": "xs", "margin": "sm"},
+                    {"type": "separator", "margin": "md", "color": "#444444"},
+                    {"type": "text",
+                     "text": "含完整繁中翻譯 + AI 編輯導讀 + 明日關注事件",
+                     "color": "#FFFFFF", "size": "sm", "wrap": True, "margin": "md"},
+                ]
+            },
+            "footer": {
+                "type": "box", "layout": "vertical",
+                "contents": [
+                    {"type": "button", "style": "primary", "color": "#F5C038",
+                     "action": {"type": "uri", "label": "下載 PDF →", "uri": pdf_url}}
+                ]
+            }
+        }
     }
 
 
-def broadcast(flex_message, access_token):
+# ====== 後備卡片（沒 pdf_url 時也要保留訊息結構）======
+
+def build_simple_text_message(text: str) -> Dict[str, Any]:
+    return {"type": "text", "text": text}
+
+
+# ====== 廣播 ======
+
+def broadcast(messages: List[Dict[str, Any]], access_token: str) -> Dict[str, Any]:
+    """送出多則訊息"""
     headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
-    payload = {"messages": [flex_message]}
+    payload = {"messages": messages[:5]}  # LINE 一次最多 5 則
     r = requests.post(LINE_BROADCAST_URL, headers=headers, json=payload, timeout=20)
     return {"status": r.status_code, "body": r.text, "ok": r.status_code == 200}
 
 
-def publish(news_items, date_str="", cover_image_url=None, pdf_url=None, output_dir="../output"):
+# ====== 主入口 ======
+
+def publish(news_items, date_str="", cover_image_url=None, pdf_url=None,
+            editorial_text="", upcoming_text="", output_dir="../output"):
     if not date_str:
         date_str = datetime.now().strftime("%Y/%m/%d")
+    weekday = ["週一", "週二", "週三", "週四", "週五", "週六", "週日"][datetime.now().weekday()]
 
-    flex = build_flex_message(news_items, date_str, cover_image_url, pdf_url)
+    # 主訊息：newsletter 文字
+    text_body = build_newsletter_text(
+        news_items, date_str, weekday,
+        editorial_text=editorial_text,
+        upcoming_text=upcoming_text,
+        pdf_url=pdf_url,
+    )
 
-    out_path = Path(output_dir) / "flex_message.json"
+    messages = [build_simple_text_message(text_body)]
+
+    # 副訊息：PDF 下載 Flex（如果有 PDF URL）
+    if pdf_url:
+        messages.append(build_pdf_action_card(date_str, pdf_url))
+
+    # 落地存檔（供除錯）
+    out_path = Path(output_dir) / "messages.json"
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(json.dumps(flex, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"💾 Flex JSON 已存：{out_path}")
+    out_path.write_text(json.dumps(messages, ensure_ascii=False, indent=2), encoding="utf-8")
+    txt_path = Path(output_dir) / "newsletter_preview.txt"
+    txt_path.write_text(text_body, encoding="utf-8")
+    print(f"💾 訊息已存：{out_path}")
+    print(f"💾 文字預覽：{txt_path}")
 
     dry_run = os.environ.get("DRY_RUN", "true").lower() in ("1", "true", "yes")
     token = os.environ.get("LINE_CHANNEL_ACCESS_TOKEN", "").strip()
 
     if dry_run:
         print("🟡 DRY_RUN 模式")
-        return {"sent": False, "reason": "dry_run", "flex": flex}
+        return {"sent": False, "reason": "dry_run", "messages": messages}
 
     if not token or "your_" in token.lower():
         print("⚠️ 找不到 LINE_CHANNEL_ACCESS_TOKEN")
-        return {"sent": False, "reason": "no_token", "flex": flex}
+        return {"sent": False, "reason": "no_token", "messages": messages}
 
-    print(f"📤 廣播至 LINE...")
-    result = broadcast(flex, token)
+    print(f"📤 廣播至 LINE（{len(messages)} 則）...")
+    result = broadcast(messages, token)
     if result["ok"]:
         print("✅ 推播成功")
     else:
         print(f"❌ 推播失敗：{result['status']} / {result['body']}")
-    return {"sent": result["ok"], "result": result, "flex": flex}
+    return {"sent": result["ok"], "result": result, "messages": messages}
 
 
 if __name__ == "__main__":
     import sys
     src = sys.argv[1] if len(sys.argv) > 1 else "../output/summarized.json"
     items = json.loads(Path(src).read_text(encoding="utf-8"))
-    publish(items)
+    publish(items, editorial_text="今日市場以半導體與 AI 為主軸，台積電法說與輝達 Blackwell Ultra 出貨同時推升相關供應鏈情緒。在宏觀面，Fed 議息會議紀要轉鴿派強化降息預期，市場避險與增持成長股的拉鋸延續。",
+            upcoming_text="本週關注重點：美國 4 月 CPI、零售銷售、PMI 等數據；Fed 主席演講可能釋出進一步政策訊號；台股法說會進入旺季，鴻海、聯發科等將陸續登場；公開資訊觀測站每日 17:00 後重大訊息。",
+            pdf_url="https://github.com/paul1217-OG/news-station/raw/main/reports/2026-04-29.pdf")
